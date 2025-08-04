@@ -1,0 +1,37 @@
+RAT Setup Guide
+
+Overview:
+- rat_server.py: Command & Control (C&C) server
+- rat_client.py: Target machine payload
+
+Prerequisites:
+- Python 3 on both machines
+- Network connectivity (default port: 9999)
+
+Setup:
+1. Client Configuration:
+   - Edit rat_client.py
+   - Set ATTACKER_IP to server's IP
+   - Optional: Change ATTACKER_PORT (default: 9999)
+
+2. Server Configuration:
+   - rat_server.py uses:
+     - LISTEN_IP = "0.0.0.0"
+     - LISTEN_PORT = 9999
+   - Modify only if needed
+
+Execution:
+1. Start Server:
+   python rat_server.py
+   - Shows listening status and connected clients
+
+2. Run Client:
+   python rat_client.py
+   - Connects to server automatically
+
+Basic Commands:
+- list: Show connected clients
+- select [index]: Control specific client
+- [command]: Execute OS commands
+- back: Return to main prompt
+- exit: Shutdown server
