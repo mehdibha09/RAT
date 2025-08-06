@@ -350,6 +350,6 @@ def main():
         debug_print("RAT Client exiting.")
 
 if __name__ == "__main__":
-    # if "--autorun" not in sys.argv:
-    #     sys.exit(0)
+    if "--autorun" not in sys.argv:
+        sys.exit(0)
     main()
