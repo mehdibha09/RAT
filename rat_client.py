@@ -6,12 +6,8 @@ import os
 import sys
 import time
 import random
-import getpass
-import struct
-from ctypes import *
-from ctypes.wintypes import *
-import winreg
 import shutil
+import winreg
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -102,22 +98,18 @@ def encrypt_data(data: str) -> bytes:
 def decrypt_data(data: bytes) -> str:
     """Secure data decryption with fallback"""
     if not AES_KEY:
-        try:
-            return data.decode('utf-8')
-        except:
-            return str(data)
-    
+        return data
+
     try:
         if isinstance(data, str):
             data = data.encode('utf-8')
-            
+
         encrypted_data = base64.b64decode(data)
         if len(encrypted_data) < 16:
             raise ValueError("Data too short for IV")
-            
+
         iv = encrypted_data[:16]
         ciphertext = encrypted_data[16:]
-        
         cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
         decryptor = cipher.decryptor()
         padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()

